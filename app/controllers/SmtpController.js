@@ -1,20 +1,26 @@
-
-var nodemailer = require('nodemailer');
-var smtpTransport = require('nodemailer-smtp-transport');
+var nodemailer = require("nodemailer");
+var smtpTransport = require("nodemailer-smtp-transport");
 
 module.exports = {
-  sendEmail: (toList, subject, message, next) => {
-    console.log("emails",toList)
-    transport = nodemailer.createTransport(
+  sendEmail: async (toList, subject, message, next) => {
+    const smtpHost = process.env.SMTP_HOST;
+    const smtpPort = Number(process.env.SMTP_PORT || 587);
+    const smtpUser = process.env.SMTP_USER;
+    const smtpPassword = process.env.SMTP_PASSWORD;
+
+    if (!smtpHost || !smtpUser || !smtpPassword) {
+      throw new Error("SMTP is not configured. Please set SMTP_HOST, SMTP_USER and SMTP_PASSWORD.");
+    }
+
+    const transport = nodemailer.createTransport(
       smtpTransport({
-        host: process.env.SMTP_HOST,
-        port: process.env.SMTP_PORT,
-        debug: true,
-        sendmail: true,
+        host: smtpHost,
+        port: smtpPort,
+        secure: smtpPort === 465,
         requiresAuth: true,
         auth: {
-          user: process.env.SMTP_USER,
-          pass: process.env.SMTP_PASSWORD,
+          user: smtpUser,
+          pass: smtpPassword,
         },
         tls: {
           rejectUnauthorized: false,
@@ -23,18 +29,13 @@ module.exports = {
     );
 
     const to = Array.isArray(toList) ? toList.join(",") : toList;
+    const info = await transport.sendMail({
+      from: "BOOKAROO <" + smtpUser + ">",
+      to: to,
+      subject: subject,
+      html: message,
+    });
 
-    transport.sendMail(
-      {
-        from: 'BOOKAROO  <' + process.env.SMTP_USER + '>',
-        to: to,
-        subject: subject,
-        html: message,
-      },
-      function (err, info) {
-        console.log('err',err, info);
-      }
-    );
-    console.log("sended successfully")
+    return info;
   },
 };

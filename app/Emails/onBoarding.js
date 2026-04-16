@@ -1651,7 +1651,7 @@ const userVerifyLink = async (options) => {
 
 `;
 
-    SmtpController.sendEmail(email, "Email Verification", message1);
+    await SmtpController.sendEmail(email, "Email Verification", message1);
 };
 const DocumentVerifyLink = async (options) => {
     adminEmail = options.adminEmail;
@@ -1930,7 +1930,7 @@ const updatePasswordEmail = (options) => {
     SmtpController.sendEmail(email, "Password Update", message);
 };
 
-const verificationOtp = (options) => {
+const verificationOtp = async (options) => {
     let email = options.email;
     let fullName = options.firstName ? options.firstName : options.fullName;
     userId = options.userId;
@@ -2078,7 +2078,7 @@ const verificationOtp = (options) => {
 
 </html>`;
 
-    SmtpController.sendEmail(email, "Verify otp", message);
+    await SmtpController.sendEmail(email, "Verify otp", message);
 };
 
 const forgotPasswordEmailForUser = (options) => {
