@@ -1,0 +1,122 @@
+
+var Mongoose = require("mongoose"),
+  Schema = Mongoose.Schema;
+module.exports = (mongoose) => {
+  var schema = mongoose.Schema(
+    {
+      name: { type: String },
+      location: Object,
+      email: String,
+      amenities: {
+        type: [Schema.Types.ObjectId],
+        ref: "amenities",
+        default: [],
+      },
+      images: Array,
+      content: String,
+      address: String,
+      zipcode: String,
+      country: String,
+      city: String,
+      state: String,
+      price: Number,
+      type: { type: String, enum: ["apartment", "castle", "farm", "building", "house"] },   // what type of property it is 
+      featured: { type: Boolean },
+      agency: { type: Schema.Types.ObjectId, ref: "users", },
+      like: { type: [Schema.Types.ObjectId], ref: "users", default: [] },
+      follow: { type: [Schema.Types.ObjectId], ref: "users", default: [] },
+      categories: {
+        type: Schema.Types.ObjectId,
+        ref: "categories",
+        index: true,
+      },
+      status: { type: String, default: "active" },
+      addedBy: { type: Schema.Types.ObjectId, ref: "users", },
+      importBy: { type: String, default: "platform" },
+      area: { type: String },
+      bedrooms: { type: String },
+      rooms: { type: String },
+      bathroom: { type: String },
+      surface: { type: String },
+      propertyFloor: { type: String },
+      toilets: { type: String },
+      livingRoom: { type: String },
+      totalFloorBuilding: { type: String },
+      propertyMonthlyCharges: { type: Number },
+      guaranteeDeposit: { type: Number },
+      propertyInventory: { type: Number },
+      situation: { type: Array },
+      building: { type: String },
+      state: { type: String },
+      equipment: { type: Array, default: [] },
+      outside: { type: Array, default: [] },
+      serviceAccessibility: { type: Array, default: [] },
+      ancilliary: { type: Array, default: [] },
+      environment: { type: Array, default: [] },
+      leisure: { type: Array, default: [] },
+      investment: { type: Array, default: [] },
+      isDeleted: { type: Boolean, default: false, index: true },
+      propertyType: {
+        type: String,
+        enum: ["sale", "rent", "directory"],
+      },
+      cooking: { type: Array,  },
+      heatingType: { type: String, },
+      energymode: { type: String,  },
+      dateOfDiagnosis: { type: String },
+      diagnosisType: { type: String,  },
+      energyConsumption: { type: String, },
+      energy_efficient: { type: String, },
+      emission_efficient: { type: String, },
+      emissions: { type: String, default: "" },
+      diagnosisDate: { type: String },
+      contact: { type: Boolean, },
+      transparency: { type: Boolean, },
+      username: { type: String, default: "" },
+      phoneNumber: { type: String, default: "" },
+      propertyCharges: { type: Number },
+      usedAs: { type: String, default: "" },
+      propertyAgencyFees: { type: Number },
+      propertyTitle: { type: String, default: "" },
+      sale_my_property: { type: Boolean, },
+      real_estate_market: { type: Boolean, },
+      add_more_step: { type: Boolean, },
+      revenue_detail: { type: Array },
+      renovation_work: { type: Array },
+      rating: { type: Array },
+      Expenses: { type: Array },
+      createdAt: Date,
+      updatedAt: Date,
+      searchType: { type: String },
+      proposal: { type: String },
+      userLeads: { type: String },
+      rateLeads: { type: String },
+      maxLeads: { type: String },
+      handleBy: { type: String },
+      agencyType: { type: String },
+      request_status: {
+        type: String,
+        enum: ["accepted", "pending", "rejected"],
+        default: "pending",
+      },
+      school1: Object,
+      school2: Object,
+      school3: Object,
+      school4: Object,
+      exactLocation: { type: Boolean, },
+      randomLocation: { type: Object },
+      step: { type: Number, default: 0 },    // denotes at what step the draft property is at
+      newlocation: Object,
+    },
+    { timestamps: true }
+  );
+
+  schema.method("toJSON", function () {
+    const { __v, _id, ...object } = this.toObject();
+    object.id = _id;
+    return object;
+  });
+
+  const draftProperty = mongoose.model("draftProperties", schema);
+  return draftProperty;
+};

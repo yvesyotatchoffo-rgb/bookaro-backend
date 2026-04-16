@@ -1,0 +1,22 @@
+var property = require("../controllers/PropertyController");
+const { adminAuth } = require("../middleware/adminAuth");
+var router = require("express").Router();
+
+router.post("/add", property.add);
+router.get("/detail", property.details);
+router.get("/listing", property.listing);
+router.put("/statusChange", property.statusChange);
+router.delete("/deleteProperty", property.delete);
+router.put("/editProperty", property.editProperty);
+router.put("/featureUnfeatureProperty", property.featureUnfeatureProperty);
+router.get("/exportProperty", property.exportProperty);
+router.post("/importProperty", adminAuth, property.importProperty);
+router.post("/likeUnlike", property.likeUnlikeProperty);
+router.post("/folowUnfollow", property.followProperty);
+router.get("/myProperties", property.getMyProperty);
+router.post("/shareProperty", property.shareProperty);
+router.post("/claimOwnership", property.claimYourProperty);
+router.get("/claimOwnership/get", property.getAllClaimProperty);
+router.put("/claimOwnership/statusChange", adminAuth, property.statusChangeClaimProperty);
+router.get("/claimOwnership/detail", property.getClaimDetail);
+module.exports = router;

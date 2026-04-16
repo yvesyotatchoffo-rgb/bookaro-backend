@@ -1,0 +1,46 @@
+services:
+  - type: web
+    name: bookaro-backend
+    env: node
+    plan: starter
+    autoDeploy: true
+    rootDir: .
+    buildCommand: npm install
+    startCommand: npm run production
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: DASHBOARD_DEV_FALLBACKS
+        value: "false"
+      - key: MONGODB_URI
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: STRIPE_KEY
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: BREVO_API_KEY
+        sync: false
+      - key: BREVO_AUTH_FROM_EMAIL
+        sync: false
+      - key: BREVO_AUTH_FROM_NAME
+        sync: false
+      - key: BREVO_PAYMENT_FROM_EMAIL
+        sync: false
+      - key: BREVO_PAYMENT_FROM_NAME
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_LOGIN_REDIRECT
+        sync: false

@@ -1,0 +1,1752 @@
+const db = require("../models");
+const Emails = require("../Emails/onBoarding");
+const visitInvite = require("../Emails/visitInvite");
+
+
+
+module.exports = {
+
+    addInterest: async (req, res) => {
+        try {
+            let {
+                propertyId,
+                buyerId,
+                funnelStatus,
+                makeOfferAmount,
+                makeOfferDescription,
+                makeOfferValidDate,
+                makeOfferMovinDate
+            } = req.body;
+            // const userId = req.identity.id;
+            let data = req.body;
+            let data1 = req.body;
+            if (!propertyId || !buyerId || !funnelStatus) {
+                return res.status(400).json({
+                    success: false,
+                    message: "propertyId and buyerId are required.",
+                });
+            }
+
+            const findInterest = await db.interests.findOne({
+                isDeleted: false,
+                propertyId,
+                buyerId,
+            })
+            if (findInterest) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Interest already exists."
+                })
+            }
+            const findBuyer = await db.users.findOne({
+                _id: buyerId,
+                isDeleted: false
+            })
+            if (!findBuyer) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Buyer doesn't exists."
+                })
+            }
+            const property = await db.property.findOne({ _id: propertyId, isDeleted: false });
+            if (!property) {
+                return res.status(404).json({
+                    success: false,
+                    message: "Property not found.",
+                });
+            }
+            const maxLeadLimit = parseInt(property.maximumLead);
+            const findExistingLeads = await db.interests.countDocuments({
+                propertyId,
+                funnelStatus: { $ne: "cancelled" },
+                isDeleted: false
+            })
+            // let findExistingLeads = 1;
+            console.log("MAXLEAD:", maxLeadLimit)
+            console.log("findEXISTINGLEADS:", findExistingLeads);
+            let allSlotsBooked = true;
+            if (property.visitSlots && property.visitSlots.length > 0) {
+                for (const slot of property.visitSlots) {
+                    for (const time of slot.times) {
+                        if (!time.booked) {
+                            allSlotsBooked = false;
+                            break;
+                        }
+                    }
+                    if (!allSlotsBooked)
+                        break;
+                }
+            }
+
+            if (property.autoInvite && !allSlotsBooked && (maxLeadLimit > findExistingLeads)) {
+                funnelStatus = "invite user for a visit";
+            }
+
+            if (property.addedBy.toString() === buyerId.toString()) {
+                return res.status(400).json({
+                    success: false,
+                    message: "You cannot show interest to your own property.",
+                });
+            }
+            let interestType = "interest sent";
+            let propertyType = property.propertyType;
+            console.log("Funnel Status:", req.body.funnelStatus);
+            console.log(typeof funnelStatus, funnelStatus);
+
+            if (req.body.funnelStatus === "offer sent") {
+                if (!makeOfferAmount) {
+                    return res.status(400).json({
+                        success: false,
+                        message: "Please provide offer amount and movin date."
+                    })
+                }
+                // console.log("Here", req.body)
+                makeOfferDescription = makeOfferDescription ?? "No description provided";
+
+                const makeAnOfferInterestCreate = await db.interests.create({
+                    buyerId,
+                    propertyId,
+                    // funnelStatus: "Interest received",
+                    funnelStatus,
+                    status: "active",
+                    propertyType,
+                    interestStatus: "pending",
+                    makeOfferAmount,
+                    makeOfferDescription,
+                    makeOfferMovinDate,
+                    makeOfferValidDate,
+                    interestType: "offer sent"
+                })
+
+                const updatePropertyInterestTime = await db.property.updateOne(
+                    { _id: propertyId, isDeleted: false },
+                    {
+                        $set: { interestUpdatedTime: new Date() },
+                        $inc: { activityIndicatorCount: 1 }
+                    }
+                );
+
+                let createNotification = await db.notifications.create({
+                    sendTo: property.addedBy,
+                    sendBy: buyerId,
+                    property_id: propertyId,
+                    status: "unread",
+                    type: "interestStatus",
+                    title: "Interest Activity",
+                    message: `${findBuyer.firstName || findBuyer.lastName} has made an offer for ${property.propertyTitle}.`
+                })
+
+                data.interestId = makeAnOfferInterestCreate._id;
+                data.addedBy = req.identity.id;
+                data.interestType = interestType;
+                const saveInterest = await db.interestTransactions.create(data)
+
+                if (property.autoInvite && !allSlotsBooked) {
+                    funnelStatus = "invite user for a visit";
+                }
+
+                if (property.autoInvite && !allSlotsBooked) {
+                    const ownerDetail = await db.users.findById(property.addedBy)
+                    // const buyerDetail = await db.users.findById(buyerId)
+                    const email_payload = {
+                        ownerEmail: ownerDetail?.email,
+                        ownerName: ownerDetail?.fullName,
+                        propertyName: property?.propertyTitle || "",
+                        buyerName: findBuyer.fullName,
+                        buyerEmail: findBuyer.email,
+                    };
+
+                    await visitInvite.propertyVisitRequest(email_payload);
+
+                    const buyerEmailPayload = {
+                        ownerEmail: ownerDetail?.email,
+                        ownerName: ownerDetail?.fullName,
+                        propertyName: property?.propertyTitle || "",
+                        buyerName: findBuyer.fullName,
+                        buyerEmail: findBuyer.email,
+                    }
+                    await visitInvite.buyerPropertyVisitRequest(buyerEmailPayload);
+                }
+                data1.funnelStatus = "invite user for a visit";
+                const saveInviteTransaction = await db.interestTransactions.create(data1);
+
+                if (maxLeadLimit >= findExistingLeads) {
+                    return res.status(201).json({
+                        success: true,
+                        message: "Offer sent to the owner",
+                        data: makeAnOfferInterestCreate,
+                    });
+                } else {
+                    return res.status(201).json({
+                        success: true,
+                        message: "Maximun Leads exceeded for this property. You are in waiting list.",
+                        data: makeAnOfferInterestCreate,
+                    });
+                }
+            }
+
+            const newInterest = new db.interests({
+                buyerId,
+                propertyId,
+                // funnelStatus: "Interest received",
+                funnelStatus,
+                status: "active",
+                propertyType,
+                interestStatus: "pending",
+                interestType
+            });
+
+
+            const updatePropertyInterestTime = await db.property.updateOne(
+                { _id: propertyId, isDeleted: false },
+                {
+                    $set: { interestUpdatedTime: new Date() },
+                    $inc: { activityIndicatorCount: 1 }
+                }
+            );
+
+            let saveNewInterest = await newInterest.save();
+
+            let createNotification = await db.notifications.create({
+                sendTo: property.addedBy,
+                sendBy: buyerId,
+                property_id: propertyId,
+                status: "unread",
+                type: "interestStatus",
+                title: "Interest Activity",
+                message: `${findBuyer.firstName || findBuyer.lastName} has shown interest in ${property.propertyTitle}.`
+            })
+
+            data.interestId = saveNewInterest._id;
+            data.addedBy = req.identity.id;
+            data.interestType = interestType;
+            const saveInterest = await db.interestTransactions.create(data);
+
+            if (property.autoInvite && !allSlotsBooked) {
+                const ownerDetail = await db.users.findById(property.addedBy)
+                // const buyerDetail = await db.users.findById(buyerId)
+                const email_payload = {
+                    ownerEmail: ownerDetail?.email,
+                    ownerName: ownerDetail?.fullName,
+                    propertyName: property?.propertyTitle || "",
+                    buyerName: findBuyer.fullName,
+                    buyerEmail: findBuyer.email,
+                };
+
+                await visitInvite.propertyVisitRequest(email_payload);
+
+                const buyerEmailPayload = {
+                    ownerEmail: ownerDetail?.email,
+                    ownerName: ownerDetail?.fullName,
+                    propertyName: property?.propertyTitle || "",
+                    buyerName: findBuyer.fullName,
+                    buyerEmail: findBuyer.email,
+                }
+                await visitInvite.buyerPropertyVisitRequest(buyerEmailPayload);
+            }
+
+            if (maxLeadLimit >= findExistingLeads) {
+                return res.status(201).json({
+                    success: true,
+                    message: "Interest sent to the owner.",
+                    data: newInterest,
+                });
+            } else {
+                return res.status(201).json({
+                    success: true,
+                    message: "Maximun Leads exceeded for this property.You are in waiting list.",
+                    data: newInterest,
+                });
+            }
+        }
+        catch (err) {
+            return res.status(500).json({
+                success: false,
+                message: "Failed to add interest.",
+                error: err.message
+            });
+        }
+    },
+
+    listInterest: async (req, res) => {
+        try {
+            const { buyerId, propertyId, propertyType } = req.query;
+            let sorting = { updatedAt: -1 };
+            if (!propertyId) {
+                return res.status(400).json({
+                    success: false,
+                    message: "propertyId is required."
+                });
+            }
+
+            let propertyFilter = { propertyId, isDeleted: false };
+
+            const buyerInterests = await db.interests.find(propertyFilter)
+                .populate({
+                    path: "propertyId",
+                    select: "name location price propertyType city state country visitSlots changeRequestNote surface rooms bathrooms bathroom propertyMonthlyCharges homeInventorySlots signingSlots contractSigned propertyTransferRequest addedBy identityVerified",
+                    match: propertyType ? { propertyType: propertyType } : {}
+                })
+                .populate("buyerId", "fullName email city country image createdAt buyerfileIdenityVerification renterfileIdenityVerification isDocumentVerified isDeclDocumentVerified documentGrade")
+                .sort(sorting)
+
+
+            // const filteredData = buyerInterests.filter(interest => interest.propertyId !== null)
+            //     .map(interest => ({
+            //         ...interest.toObject(),
+            //         property: interest.propertyId,
+            //         buyer: interest.buyerId
+            //     }));
+            const filteredData = await Promise.all(
+                buyerInterests
+                    .filter(interest => interest.propertyId !== null)
+                    .map(async (interest) => {
+                        const funnelStatus = interest.funnelStatus?.trim();
+                        // let youtubeUrl = null;
+                        // let title = null;
+                        let funnel = null;
+                        if (funnelStatus) {
+                            funnel = await db.funnelUrl.findOne({ funnelStatus, status: "active" }).select("youtubeUrl title tags type image status videoOwner duration");
+                            if (funnel) {
+                                // youtubeUrl = funnel.youtubeUrl;
+                                // title = funnel.title;
+                            }
+                        }
+
+                        return {
+                            ...interest.toObject(),
+                            property: interest.propertyId,
+                            buyer: interest.buyerId,
+                            // youtubeUrl: youtubeUrl || null,
+                            // title: title || null,
+                            funnel: funnel || null,
+                        };
+                    })
+            );
+            const hasOfferAccepted = filteredData.some(interest => interest.offerStatus);
+            const hasApplicationAccepted = filteredData.some(interest => interest.applicationAccepted);
+
+            const response = {
+                success: true,
+                message: "Listings fetched successfully.",
+                data: filteredData,
+                total: filteredData.length
+            };
+
+            if (hasOfferAccepted) {
+                response.offerStatus = true;
+            } else {
+                response.offerStatus = false
+            }
+            if (hasApplicationAccepted) {
+                response.applicationAccepted = true;
+            } else {
+                response.applicationAccepted = false
+            }
+
+            return res.status(200).json(response);
+        }
+        catch (error) {
+            return res.status(500).json({
+                success: false,
+                message: "Failed to fetch listings.",
+                error: error.message
+            });
+        }
+    },
+
+    userInterests: async (req, res) => {
+        try {
+            const { buyerId, propertyType } = req.query;
+            const page = parseInt(req.query.page) || 1;
+            const limit = parseInt(req.query.limit) || 10;
+
+            if (!buyerId) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Payload missing: buyerId is required.",
+                });
+            }
+
+            const findInterest = await db.in
+            const skip = (page - 1) * limit;
+            let sorting = { updatedAt: -1 }
+
+            // const funnelStages = [
+            //     "interest received", "invite for a visit", "has to book a visit", "host the visit", "visit hosted",
+            //     "visit review or offer", "visit review received", "submit offer", "offer received", "answer offer",
+            //     "renter application received", "offer refused", "counter offer sent", "answer counter-offer", "apply for the property",
+            //     "application received", "answer application", "application not accepted", "application accepted", "sign contract", "cancelled"
+            // ];
+
+            const findInterests = await db.interests.find({ isDeleted: false, buyerId: buyerId })
+                .populate({
+                    path: "propertyId",
+                    match: propertyType ? { propertyType: propertyType } : {},
+                    populate: {
+                        path: "addedBy",
+                        select: "fullName email city country image createdAt"
+                    }
+                })
+                .sort(sorting) // Apply sorting by updatedAt
+                .skip(skip)
+                .limit(limit)
+                .lean();
+
+            const filteredInterests = findInterests.filter(interest => interest.propertyId !== null);
+
+            if (filteredInterests.length === 0) {
+                return res.status(200).json({
+                    success: false,
+                    message: "No interests found for the given buyer and property type.",
+                });
+            }
+
+            // const dataWithLeads = await Promise.all(
+            //     filteredInterests.map(async (interest) => {
+            //         const leadsCount = await db.interests.countDocuments({
+            //             isDeleted: false,
+            //             propertyId: interest.propertyId._id
+            //         });
+            //         return {
+            //             ...interest,
+            //             totalLeads: leadsCount
+            //         };
+            //     })
+            // );
+
+            const dataWithLeads = await Promise.all(
+                filteredInterests.map(async (interest) => {
+                    const leadsCount = await db.interests.countDocuments({
+                        isDeleted: false,
+                        propertyId: interest.propertyId._id
+                    });
+
+                    // let youtubeUrl = null;
+                    // let title = null;
+                    // let image = null;
+                    // let type = null;
+                    let funnel = null;
+                    const funnelStatus = interest.funnelStatus;
+
+                    if (funnelStatus) {
+                        funnel = await db.funnelUrl.findOne({
+                            funnelStatus: funnelStatus.trim(),
+                            status: "active"
+                        }).select('youtubeUrl title image type tags status videoOwner duration');
+
+                        // if (funnel) {
+                        //     youtubeUrl = funnel.youtubeUrl;
+                        //     title = funnel.title;
+                        //     image = funnel.image;
+                        //     tags = funnel.tags;
+                        //     type = funnel.type;
+                        // }
+                    }
+
+                    return {
+                        ...interest,
+                        totalLeads: leadsCount,
+                        // youtubeUrl: youtubeUrl || null,
+                        // title: title || null,
+                        funnel: funnel || null,
+                    };
+                })
+            );
+
+            if (dataWithLeads.length === 0) {
+                return res.status(200).json({
+                    success: false,
+                    message: "No interests found for the given buyer and property type.",
+                });
+            }
+
+
+            const totalInterests = await db.interests.countDocuments({
+                isDeleted: false,
+                buyerId: buyerId,
+                ...(propertyType && { "propertyId.propertyType": propertyType })
+            });
+
+            return res.status(200).json({
+                success: true,
+                message: "Data fetched successfully.",
+                data: filteredInterests,
+                total: filteredInterests.length,
+                data: dataWithLeads,
+            });
+
+        }
+        catch (error) {
+            return res.status(500).json({
+                success: false,
+                message: "Failed to fetch user's intereted properties.",
+                error: error.message
+            });
+        }
+    },
+
+    statusChange: async (req, res) => {
+        try {
+            const {
+                funnelStatus,
+                finalHomeInventorySlot,
+                offerStatus,
+                applicationAccepted,
+                changeRequestNote,
+                userConfirmation,
+                ownerConfirmation,
+                finalSale,
+                ownerSale,
+                userSale,
+                finalContract,
+                ownerContract,
+                userContract,
+                finalPresale,
+                ownerSigned,
+                userSigned,
+                userPresale,
+                ownerPresale,
+                ownerVisitDate,
+                finalVisitDate,
+                userVisitDate,
+                review,
+                finalPrice,
+                buyerPrice,
+                icon1,
+                icon2,
+                icon3,
+                icon4,
+                icon5,
+                icon6,
+                icon7,
+                ownerPrice,
+                documents,
+                applicationFile,
+                finalSignSlot,
+                interestId,
+            } = req.body;
+
+            let data = req.body;
+
+            const interest = await db.interests.findOne(
+                { _id: interestId, isDeleted: false }
+            )
+                .populate({
+                    path: 'buyerId',
+                    select: 'fullName email' // Only select the fullName field from the buyer
+                })
+                .lean();
+            if (!interest) {
+                return res.status(404).json({
+                    success: false,
+                    message: "Interest not found"
+                });
+            }
+
+            const buyerName = interest.buyerId?.firstName;
+            const buyerEmail = interest.buyerId?.email;
+
+            if (funnelStatus === "offer accept by owner" && (finalPrice === undefined || typeof finalPrice !== "number")) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Final Price is required in case of offerAcceptence"
+                })
+            }
+
+
+            if (interest.funnelStatus === "cancelled") {
+                return res.status(400).json({
+                    success: false,
+                    message: "Cannot change status after cancellation"
+                });
+            }
+
+            let propertyId = interest.propertyId;
+            const findProperty = await db.property.findOne({
+                _id: propertyId,
+                isDeleted: false
+            })
+                .populate({
+                    path: "addedBy",
+                    select: "fullName image email"
+                })
+            const ownerName = findProperty.addedBy?.firstName;
+            const ownerEmail = findProperty.addedBy?.email;
+
+            if (funnelStatus === "offer accepted" || funnelStatus === "application accepted") {
+                let updateOffer = await db.property.updateOne({
+                    _id: propertyId,
+                    isDeleted: false
+                }, {
+                    $set: { offerStatus: true }
+                })
+            }
+
+            if (funnelStatus === "buyer requested for document") {
+                let createDocReqNotfication = await db.notifications.create({
+                    sendTo: findProperty.addedBy,
+                    sendBy: interest.buyerId,
+                    property_id: propertyId,
+                    status: "unread",
+                    title: "user-seller-files-request-notification",
+                    message: `${buyerName} has requested your seller files for property titled ${findProperty.propertyTitle}`
+
+                })
+                console.log("Buyer document request notificatin done");
+            }
+
+            if (funnelStatus === "visit accept by user") {
+                let updateVisitBookedCount = await db.property.updateOne({
+                    _id: propertyId,
+                    isDeleted: false
+                }, {
+                    $inc: { visitBookedCount: 1 }
+                })
+
+                if (finalVisitDate && finalVisitDate.date && finalVisitDate.from && finalVisitDate.to) {
+                    const updateResult = await db.property.updateOne(
+                        {
+                            _id: propertyId,
+                            isDeleted: false,
+                            "visitSlots.date": finalVisitDate.date,
+                            "visitSlots.times.from": finalVisitDate.from,
+                            "visitSlots.times.to": finalVisitDate.to,
+                            "visitSlots.times.date": finalVisitDate.date
+                        },
+                        {
+                            $set: {
+                                "visitSlots.$[outer].times.$[inner].booked": true,
+                                "finalVisitDate": finalVisitDate // Also update the finalVisitDate field
+                            }
+                        },
+                        {
+                            arrayFilters: [
+                                { "outer.date": finalVisitDate.date }, // Match the date group
+                                {
+                                    "inner.from": finalVisitDate.from,
+                                    "inner.to": finalVisitDate.to,
+                                    "inner.date": finalVisitDate.date
+                                } // Match the exact time slot
+                            ]
+                        }
+                    )
+                }
+            }
+
+            if (["contract signed by user", "contract signed by owner"].includes(funnelStatus)) {
+                const updateProperty = await db.property.updateOne(
+                    { _id: propertyId },
+                    { contractSigned: true }
+                )
+
+                const contractEmailPayloadForOwner = {
+                    ownerEmail,
+                    propertyTitle: findProperty.propertyTitle,
+                    buyerName,
+                    ownerName
+                };
+
+                const contractEmailPayloadForBuyer = {
+                    ownerEmail: buyerEmail,
+                    propertyTitle: findProperty.propertyTitle,
+                    buyerName: ownerName,
+                    ownerName: buyerName,
+                };
+
+                if (funnelStatus === "contract signed by user") {
+                    await db.notifications.create({
+                        sendTo: findProperty.addedBy,
+                        sendBy: interest.buyerId,
+                        property_id: propertyId,
+                        status: "unread",
+                        title: "contract-signing-notification",
+                        message: `${buyerName} has signed the contract for ${findProperty.propertyTitle}`
+                    })
+
+                    await db.notifications.create({
+                        sendTo: interest.buyerId,
+                        sendBy: findProperty.addedBy,
+                        property_id: propertyId,
+                        status: "unread",
+                        title: "contract-signing-notification",
+                        message: `${buyerName} has signed the contract for ${findProperty.propertyTitle}`
+                    })
+                    contractEmailPayloadForOwner.signerName = buyerName;
+                    contractEmailPayloadForBuyer.signerName = buyerName;
+                }
+
+                if (funnelStatus === "contract signed by owner") {
+                    await db.notifications.create({
+                        sendTo: findProperty.addedBy,
+                        sendBy: interest.buyerId,
+                        property_id: propertyId,
+                        status: "unread",
+                        title: "contract-signing-notification",
+                        message: `${ownerName} has signed the contract for ${findProperty.propertyTitle}`
+                    })
+
+                    await db.notifications.create({
+                        sendTo: interest.buyerId,
+                        sendBy: findProperty.addedBy,
+                        property_id: propertyId,
+                        status: "unread",
+                        title: "contract-signing-notification",
+                        message: `${ownerName} has signed the contract for ${findProperty.propertyTitle}`
+                    })
+                    contractEmailPayloadForOwner.signerName = ownerName;
+                    contractEmailPayloadForBuyer.signerName = buyerName;
+                }
+
+                await Emails.contractSignedEmail(contractEmailPayloadForOwner);
+                await Emails.contractSignedEmail(contractEmailPayloadForBuyer)
+
+            }
+
+            if (req.body.funnelStatus === "review submit by user" && review && typeof review === "object") {
+                const addreview = db.reviews.create({
+                    userId: interest.buyerId,
+                    propertyId: interest.propertyId,
+                    interestId: interestId,
+                    location: review?.location,
+                    luminosity: review?.luminosity,
+                    condition: review?.condition,
+                    areaCondition: review?.areaCondition,
+                    propertyInformation: review?.propertyInformation,
+                    peacefullSetting: review?.peacefullSetting,
+                    note: review?.note
+                })
+            }
+
+            data.propertyId = propertyId;
+            data.addedBy = req.identity.id;
+
+            const createInterestTransaction = await db.interestTransactions.create(data)
+
+            const updatedInterest = await db.interests.findByIdAndUpdate(
+                interestId,
+                {
+                    funnelStatus,
+                    finalPrice: finalPrice || interest.finalPrice,
+                    buyerPrice: buyerPrice || interest.buyerPrice,
+                    ownerPrice: ownerPrice || interest.ownerPrice,
+                    documents: documents || interest.documents,
+                    applicationFile: applicationFile || interest.applicationFile,
+                    ownerVisitDate: ownerVisitDate || interest.ownerVisitDate,
+                    finalVisitDate: finalVisitDate || interest.finalVisitDate,
+                    userVisitDate: userVisitDate || interest.userVisitDate,
+                    icon1: icon1 !== undefined ? icon1 : interest.icon1,
+                    icon2: icon2 !== undefined ? icon2 : interest.icon2,
+                    icon3: icon3 !== undefined ? icon3 : interest.icon3,
+                    icon4: icon4 !== undefined ? icon4 : interest.icon4,
+                    icon5: icon5 !== undefined ? icon5 : interest.icon5,
+                    icon6: icon6 !== undefined ? icon6 : interest.icon6,
+                    icon7: icon7 !== undefined ? icon7 : interest.icon7,
+                    offerStatus: offerStatus !== undefined ? offerStatus : interest.offerStatus,
+                    applicationAccepted: applicationAccepted !== undefined ? applicationAccepted : interest.applicationAccepted,
+                    userConfirmation: userConfirmation !== undefined ? userConfirmation : interest.userConfirmation,
+                    ownerConfirmation: ownerConfirmation !== undefined ? ownerConfirmation : interest.ownerConfirmation,
+                    userSigned: userSigned !== undefined ? userSigned : interest.userSigned,
+                    ownerSigned: ownerSigned !== undefined ? ownerSigned : interest.ownerSigned,
+                    userContract: userContract || interest.userContract,
+                    ownerContract: ownerContract || interest.ownerContract,
+                    finalContract: finalContract || interest.finalContract,
+                    ownerPresale: ownerPresale || interest.ownerPresale,
+                    userPresale: userPresale || interest.userPresale,
+                    finalPresale: finalPresale || interest.finalPresale,
+                    userSale: userSale || interest.userSale,
+                    ownerSale: ownerSale || interest.ownerSale,
+                    finalSale: finalSale || interest.finalSale,
+                    // review: review !== undefined ? review : interest.review,
+                    review: review || interest.review,
+                    changeRequestNote: changeRequestNote || interest.changeRequestNote,
+                    finalSignSlot: finalSignSlot || interest.finalSignSlot,
+                    finalHomeInventorySlot: finalHomeInventorySlot || interest.finalHomeInventorySlot,
+                },
+                { new: true, lean: true }
+            );
+
+            if (funnelStatus === "offer accept by owner") {
+                const createTimeline = await db.timeline.create({
+                    propertyId,
+                    addedBy: req.identity.id,
+                    type: "interestStatus",
+                    finalPrice: finalPrice,
+                    funnelStatus: "offer accepted"
+                })
+            }
+            if (funnelStatus === "offer refused by owner") {
+                const createTimeline = await db.timeline.create({
+                    propertyId,
+                    type: "interestStatus",
+                    refusedPrice: Number(updatedInterest.buyerPrice.amount),
+                    addedBy: req.identity.id,
+                    funnelStatus: "offer refused"
+                })
+            }
+            if (funnelStatus === "owner accept the application") {
+                const createTimeline = await db.timeline.create({
+                    propertyId,
+                    type: "interestStatus",
+                    // applicationPrice: Number(ownerPrice ? ownerPrice : buyerPrice),
+                    addedBy: req.identity.id,
+                    funnelStatus: "application refused"
+                })
+            }
+            if (funnelStatus === "owner reject the application") {
+                const createTimeline = await db.timeline.create({
+                    propertyId,
+                    type: "interestStatus",
+                    // applicationPrice: Number(updatedInterest.finalPrice),
+                    addedBy: req.identity.id,
+                    funnelStatus: "application accepted"
+                })
+            }
+
+            const updatePropertyInterestTime = await db.property.updateOne(
+                { _id: propertyId, isDeleted: false },
+                {
+                    $set: { interestUpdatedTime: new Date() },
+                    $inc: { activityIndicatorCount: 1 }
+                }
+            )
+
+            return res.status(200).json({
+                success: true,
+                message: "Funnel status updated successfully",
+                interest: updatedInterest
+            });
+        } catch (error) {
+            return res.status(500).json({
+                success: false,
+                message: error.message
+            });
+        }
+    },
+
+
+    propertyTransfer: async (req, res) => {
+        try {
+            const { newOwner, propertyId, interestId } = req.body;
+
+            if (!newOwner || !propertyId || !interestId) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Payload missing."
+                })
+            }
+            const findProperty = await db.property.findOne({
+                isDeleted: false,
+                _id: propertyId
+            })
+
+            if (!findProperty) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Property not found!"
+                });
+            }
+
+            const findExpireBuyers = await db.interests.find({
+                propertyId,
+                isDeleted: false,
+                // interestStatus: "pending"
+            })
+
+
+            //bulk email send
+            let buyerIds = findExpireBuyers.map((interest) => interest.buyerId)
+
+            const users = await db.users.find(
+                { _id: { $in: buyerIds } },
+                { email: 1, _id: 1 }
+            )
+
+            // const emailMapping = users.reduce((acc, user) => {
+            //     acc[user._id] = user.email;
+            //     return acc;
+            // }, {});
+            const currentInterest = await db.interests.findOne({
+                isDeleted: false,
+                _id: interestId
+            });
+            if (!currentInterest) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Interest not found."
+                })
+            }
+
+            const emailMapping = users.reduce((acc, user) => {
+                if (user._id.toString() !== currentInterest.buyerId.toString()) {
+                    acc[user._id] = user.email;
+                }
+                return acc;
+            }, {});
+            //bulk email send//
+
+            console.log(emailMapping);
+            const findUser = await db.users.findOne({
+                isDeleted: false,
+                _id: newOwner
+            });
+
+            if (!findUser) {
+                return res.status(400).json({
+                    success: false,
+                    message: "User not found!"
+                });
+            }
+
+            let oldOwner = findProperty.addedBy;
+            if (!oldOwner) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Property owner not found!"
+                });
+            }
+            const findOldOwner = await db.users.findOne({ _id: oldOwner, isDeleted: false });
+
+            if ((newOwner) == (oldOwner)) {
+                return res.status(400).json({
+                    success: false,
+                    message: "You can't transfer you own property to yourself."
+                })
+            }
+            const countLeads = await db.interests.find({
+                isDeleted: false,
+                propertyId,
+                //   interestStatus: "pending"
+            })
+                .populate('buyerId', 'image')
+
+            const leadsImages = countLeads.map((lead) => lead.buyerId?.image || null).filter(Boolean);
+
+            const findInterest = await db.interests.findOne({
+                buyerId: newOwner,
+                propertyId: propertyId,
+                isDeleted: false
+            })
+                .populate("buyerId", "fullName email city country image createdAt");
+
+            if (!findInterest) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Interest not found."
+                })
+            }
+
+            if (findInterest._id != interestId) {
+                return res.status(400).json({
+                    success: false,
+                    message: "propertyId, newOwner and interestId doesnot matched."
+                })
+            }
+
+            const findIdByToken = await db.users.findOne({
+                isDeleted: false,
+                _id: req.identity.id
+            })
+
+            const updateOwner = await db.property.updateOne(
+                { isDeleted: false, _id: propertyId }, {
+                addedBy: newOwner,
+                email: findUser.email,
+                offerStatus: false,
+                contractSigned: false,
+                visitBookedCount: 0,
+                activityIndicatorCount: 0,
+                homeInventorySlots: [],
+                signingSlots: [],
+                autoInvite: false,
+                sellerFiles: {},
+                visitSlots: []
+            })
+
+            const createPropertyTransation = await db.propertyTransfers.create({
+                newOwner: newOwner,
+                oldOwner: oldOwner,
+                transferDate: new Date(),
+                transferStatus: "completed",
+                propertyType: findProperty.propertyType,
+                propertyId: propertyId,
+            })
+
+            const createTimeline = await db.timeline.create({
+                oldOwner: findOldOwner.fullName,
+                newOwner: findUser.fullName,
+                addedBy: req.identity.id,
+                transferDate: new Date(),
+                propertyId: propertyId,
+                type: "ownerChange"
+            })
+
+            const expireInterest = await db.interests.updateMany({
+                isDeleted: false,
+                propertyId: propertyId
+            }, {
+                interestStatus: "expired",
+                OldOwnerData: {
+                    image: findIdByToken.image,
+                    fullName: findIdByToken.fullName,
+                    email: findIdByToken.email,
+                    country: findIdByToken.country,
+                    createdAt: findIdByToken.createdAt,
+                    totalLeads: (countLeads.length) - 1,
+                    leadsImages,
+                    address: findIdByToken.address
+                },
+                transferDone: true
+            });
+
+            const updateInterest = await db.interests.updateOne({
+                _id: interestId
+            }, {
+                interestStatus: "completed",
+                funnelStatus: "transferred"
+            });
+
+            const recipientEmails = Object.values(emailMapping);
+
+            const offerAcceptedEmailPayload = recipientEmails.map((email) => ({
+                email: email,
+                buyerName: findUser.fullName,
+                price: findExpireBuyers.finalPrice,
+                type: "rentPropertyTransfer",
+                ownerName: findOldOwner.fullName,
+                propertyTitle: findProperty.propertyTitle,
+                propertyLink: `https://book.jcsoftwaresolution.in/property-details?id=${findProperty._id}`
+            }));
+            for (const emailPayload of offerAcceptedEmailPayload) {
+                await Emails.propertyTransferEmail(emailPayload);
+                console.log("case: offer accepted");
+                console.log(emailPayload);
+            }
+            const newOwnerPayload = {
+                type: "sellerCase",
+                email: findUser.email,
+                ownerName: findOldOwner.fullName,
+                renterName: findUser.fullName,
+                propertyTitle: findProperty.propertyTitle,
+                propertyLink: `https://book.jcsoftwaresolution.in/property-details?id=${findProperty._id}`,
+            }
+            const sendRenterEmail = await Emails.ownerCongratsEmail(newOwnerPayload)
+
+            const saveHistory = await db.interestTransactions.create({
+                interestId,
+                funnelStatus: "transferred",
+                propertyId,
+                OldOwnerData: {
+                    image: findIdByToken.image,
+                    fullName: findIdByToken.fullName,
+                    email: findIdByToken.email,
+                    country: findIdByToken.country,
+                    createdAt: findIdByToken.createdAt,
+                    totalLeads: (countLeads.length) - 1,
+                    leadsImages,
+                    address: findIdByToken.address
+                },
+                transferDone: true,
+                interestStatus: "completed",
+            })
+
+            return res.status(200).json({
+                success: true,
+                message: `${findUser.fullName} is the new owner of ${findProperty.propertyTitle}.`,
+                data: {
+                    findInterest,
+                    propertyTitle: findProperty.propertyTitle,
+                    propertyImages: findProperty.images,
+                    transferDate: new Date()
+                }
+            })
+        }
+        catch (error) {
+            res.status(500).json({
+                success: false,
+                message: error.message
+            });
+        }
+    },
+
+    transferHistory: async (req, res) => {
+        try {
+            const { userId } = req.query;
+            if (!userId) {
+                return res.status(400).json({
+                    success: false,
+                    message: "payload missing",
+                })
+            }
+            const findTransferredProperties = await db.propertyTransfers.find({
+                isDeleted: false,
+                $or: [
+                    { oldOwner: userId },
+                    { owner: userId }
+                ]
+            });
+            if (!findTransferredProperties || findTransferredProperties.length === 0) {
+                return res.status(200).json({
+                    success: false,
+                    message: "You don't have any transferred properties yet."
+                })
+            }
+
+            const propertyIds = findTransferredProperties.map((transfer) => transfer.propertyId);
+
+            const expiredInterests = await db.interests.find({
+                isDeleted: false,
+                propertyId: { $in: propertyIds },
+                interestStatus: "completed"
+            })
+                .populate({
+                    path: "propertyId",
+                    select: "propertyTitle address images"
+                })
+                .lean();
+
+            if (!expiredInterests || expiredInterests.length === 0) {
+                return res.status(400).json({
+                    success: false,
+                    message: "No expired interests found for the transferred properties.",
+                });
+            }
+
+            return res.status(200).json({
+                success: true,
+                message: "Here are the expired interests for your transferred properties.",
+                data: expiredInterests,
+            });
+
+        }
+        catch (err) {
+            return res.status(400).json({
+                success: false,
+                message: "Failed to get history transfers.",
+                error: err.message
+            })
+        }
+    },
+
+    expiredInterests: async (req, res) => {
+        try {
+
+            const { propertyId } = req.query;
+            const page = parseInt(req.query.page) || 1;
+            const limit = parseInt(req.query.limit) || 10;
+            const skip = (page - 1) * limit;
+
+            const findExpiredInterests = await db.interests.find({
+                isDeleted: false,
+                propertyId,
+                transferDone: true
+            })
+                .populate({
+                    path: "buyerId",
+                    select: "fullName email image country city image createdAt"
+                })
+                .populate({
+                    path: "propertyId",
+                    select: "id propertyTitle propertyType images name location city state country bathroom surface propertyType visitSlots price"
+                })
+                .skip(skip)
+                .limit(limit)
+                .lean()
+
+            return res.status(200).json({
+                success: true,
+                message: "Expired Interests.",
+                data: findExpiredInterests
+            })
+        }
+        catch (err) {
+            return res.status(500).json({
+                success: false,
+                Error: err.message
+            });
+        }
+    },
+
+    informUsers: async (req, res) => {
+        try {
+            const { interestId, funnelStatus } = req.body;
+
+            // if(!interestId || !funnelStatus){
+            //     return res.status(400).json({
+            //         success: false,
+            //         message: "Payload Missing."
+            //     })
+            // }
+
+            const findInterest = await db.interests.findOne({ _id: interestId, isDeleted: false });
+            // console.log(findInterest);
+            let buyerId = findInterest.buyerId;
+            let ownerPrice = findInterest.finalPrice;
+            let finalPrice = findInterest.finalPrice;
+            // console.log("object");
+            let propertyId = findInterest.propertyId;
+            const findBuyer = await db.users.findOne({
+                _id: buyerId,
+                isDeleted: false
+            });
+            let buyerName = findBuyer.firstName;
+            const findProperty = await db.property.findOne({
+                _id: propertyId,
+                isDeleted: false
+            })
+                .populate({
+                    path: "addedBy",
+                    select: "fullName"
+                })
+
+            let ownerId = findProperty.addedBy;
+            const findOwner = await db.users.findOne({
+                _id: ownerId, isDeleted: false
+            })
+            let propertyData = {
+                ...findProperty.toObject(),
+                ownerName: findProperty.addedBy?.fullName
+            }
+
+            const findInterestedUsers = await db.interests.find({
+                propertyId,
+                isDeleted: false,
+                //    interestStatus: "pending",
+            })
+
+            let buyerIds = findInterestedUsers.map((interest) => interest.buyerId)
+            console.log(buyerIds);
+
+            const users = await db.users.find(
+                { _id: { $in: buyerIds } },
+                { email: 1, _id: 1 }
+            )
+            const emailMapping = users.reduce((acc, user) => {
+                acc[user._id] = user.email;
+                return acc;
+            }, {});
+
+            console.log(emailMapping);
+
+            switch (funnelStatus) {
+                case "offer accept by owner":
+
+                    const recipientEmails = Object.values(emailMapping);
+
+                    const offerAcceptedEmailPayload = recipientEmails.map((email) => ({
+                        email: email,
+                        buyerName: buyerName,
+                        price: finalPrice,
+                        type: "funnelOfferAccepted",
+                        ownerName: propertyData.ownerName,
+                        propertyTitle: findProperty.propertyTitle,
+                        propertyLink: `http://195.35.8.196:8089/property-details?id=${findProperty._id}`
+                    }));
+                    for (const emailPayload of offerAcceptedEmailPayload) {
+                        await Emails.interestUpdateEmail(emailPayload);
+                        console.log("case: offer accepted");
+                        console.log(emailPayload);
+                    }
+                    break;
+
+                case "offer refused by owner":
+
+                    const offerRefusedEmails = Object.values(emailMapping);
+
+                    const offerRefusedEmailPayload = offerRefusedEmails.map((email) => ({
+                        email: email,
+                        buyerName: findBuyer.fullName,
+                        price: ownerPrice,
+                        type: "funnelOfferRefused",
+                        ownerName: propertyData.ownerName,
+                        propertyTitle: findProperty.propertyTitle,
+                        propertyLink: `http://195.35.8.196:8089/property-details?id=${findProperty._id}`
+                    }));
+                    for (const emailPayload of offerRefusedEmailPayload) {
+                        await Emails.interestUpdateEmail(emailPayload);
+                        console.log("case: offer refused");
+                        console.log(emailPayload);
+                    }
+
+                    break;
+
+                case "owner reject the application":
+
+                    const applicationRefusedEmails = Object.values(emailMapping);
+
+                    const applicationRefusedEmailPayload = applicationRefusedEmails.map((email) => ({
+                        email: email,
+                        buyerName: findBuyer.fullName,
+                        price: ownerPrice,
+                        type: "funnelApplicationRefused",
+                        ownerName: propertyData.ownerName,
+                        propertyTitle: findProperty.propertyTitle,
+                        propertyLink: `http://195.35.8.196:8089/property-details?id=${findProperty._id}`
+                    }))
+
+                    for (const emailPayload of applicationRefusedEmailPayload) {
+                        await Emails.interestUpdateEmail(emailPayload);
+                        console.log("case: aplication refused");
+                        console.log(emailPayload);
+                    }
+                    break;
+
+                case "owner accept the application":
+
+                    const applicationAcceptedEmails = Object.values(emailMapping);
+
+                    const applicationAcceptedEmailPayload = applicationAcceptedEmails.map((email) => ({
+                        buyerName: findBuyer.fullName,
+                        price: finalPrice,
+                        type: "funnelApplicationAccepted",
+                        ownerName: propertyData.ownerName,
+                        propertyTitle: findProperty.propertyTitle,
+                        propertyLink: `http://195.35.8.196:8089/property-details?id=${findProperty._id}`
+                    }));
+
+                    for (const emailPayload of applicationAcceptedEmailPayload) {
+                        await Emails.interestUpdateEmail(emailPayload);
+                        console.log("case: aplication accepted");
+                        console.log(emailPayload);
+                    }
+                    break;
+
+                case "offer submit by user":       // informing owner that buyer has shared his documnets
+
+                    const sendSaleNotification = await db.notifications.create({
+                        sendTo: ownerId,
+                        sendBy: buyerId,
+                        status: "unread",
+                        property_id: propertyId,
+                        type: "interestStatus",
+                        title: "documents shared",
+                        message: `${buyerName} has shared his documents for property titled ${findProperty.propertyTitle}.`
+                    })
+                    console.log("Owner notified sale case");
+                    const emailPayloadSale = {
+                        email: findOwner.email,
+                        buyerName,
+                        propertyTitle: findProperty.propertyTitle,
+                        OwnerName: findOwner.fullName
+                    }
+
+                    const ownerDocsNotifyEmailSale = await Emails.ownerDocsNotify(emailPayloadSale);
+                    console.log("Email sent to owner sale case.");
+                    break;
+
+                case "application submit by user":
+                    const sendRentNotification = await db.notifications.create({
+                        sendTo: ownerId,
+                        sendBy: buyerId,
+                        status: "unread",
+                        property_id: propertyId,
+                        type: "interestStatus",
+                        title: "documents shared",
+                        message: `${buyerName} has shared his documents for property titled ${findProperty.propertyTitle}.`
+                    })
+                    console.log("Owner notified rent case");
+                    const emailPayloadRent = {
+                        email: findOwner.email,
+                        buyerName,
+                        propertyTitle: findProperty.propertyTitle,
+                        OwnerName: findOwner.fullName
+                    }
+
+                    const ownerDocsNotifyEmailRent = await Emails.ownerDocsNotify(emailPayloadRent);
+                    console.log("Email sent to owner rent case.");
+                    break;
+            }
+
+            return res.status(200).json({
+                success: true,
+                message: "Email and notification has been sent."
+            });
+        }
+        catch (err) {
+            return res.status(500).json({
+                success: false,
+                Error: err.message
+            });
+        }
+    },
+
+    interestMessages: async (req, res) => {
+        try {
+            const { interestId } = req.query;
+
+            if (!interestId) {
+                return res.status(400).json({
+                    success: false,
+                    message: "interestId is required."
+                });
+            }
+
+            // const skip = (page - 1) * limit;
+
+            const results = await db.interestTransactions
+                .find({ interestId, isDeleted: false })
+                .populate({
+                    path: "propertyId",
+                    select: "name location price propertyType city state country visitSlots changeRequestNote surface rooms bathrooms bathroom propertyMonthlyCharges homeInventorySlots signingSlots contractSigned propertyTransferRequest addedBy",
+                    // match: propertyType ? { propertyType: propertyType } : {}
+                })
+                .populate("buyerId", "fullName email city country image createdAt ")
+                .sort({ createdAt: 1 })
+            // .skip(skip)
+            // .limit(parseInt(limit));
+
+            const totalCount = await db.interestTransactions.countDocuments({ interestId, isDeleted: false });
+
+            return res.status(200).json({
+                success: true,
+                data: results,
+                pagination: {
+                    total: totalCount,
+                    // page: parseInt(page),
+                    // limit: parseInt(limit)
+                }
+            });
+        } catch (err) {
+            // Handle errors gracefully
+            return res.status(500).json({
+                success: false,
+                message: "An error occurred while fetching interest transactions.",
+                error: err.message
+            });
+        }
+    },
+
+    renterTransfer: async (req, res) => {
+        try {
+
+            const { interestId, funnelStatus } = req.body;
+            let data = req.body;
+            if (!interestId || !funnelStatus) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Id and funnelStatus is required."
+                })
+            }
+
+            if (!["renter assigned", "renter transfered"].includes(funnelStatus)) {
+                return res.status(400).json({
+                    success: false,
+                    message: "can only be used for rental transfer"
+                })
+            }
+
+            // if (funnelStatus !== "renter assigned" || funnelStatus !== "renter transfered") {
+            //     return res.status(400).json({
+            //         success: false,
+            //         message: "can only be used for rental transfer"
+            //     })
+            // }
+            const findInterest = await db.interests.findOne({
+                isDeleted: false,
+                _id: interestId
+            })
+
+            data.addedBy = req.identity.id;
+            data.propertyId = findInterest.propertyId;
+            const saveInterest = await db.interestTransactions.create(data);
+
+            if (!findInterest) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Interest not found!"
+                })
+            }
+
+            let propertyId = findInterest.propertyId;
+
+            const findExpireBuyers = await db.interests.find({
+                propertyId: propertyId,
+                isDeleted: false,
+                // interestStatus: "pending"
+            })
+
+            let buyerIds = findExpireBuyers.map((interest) => interest.buyerId)
+
+            const users = await db.users.find(
+                { _id: { $in: buyerIds } },
+                { email: 1, _id: 1 }
+            )
+
+            // const emailMapping = users.reduce((acc, user) => {
+            //     acc[user._id] = user.email;
+            //     return acc;
+            // }, {});
+
+
+            const emailMapping = users.reduce((acc, user) => {
+                if (user._id.toString() !== findInterest.buyerId.toString()) {
+                    acc[user._id] = user.email;
+                }
+                return acc;
+            }, {});
+
+            const findProperty = await db.property.findOne({
+                isDeleted: false,
+                _id: propertyId
+            })
+
+            let propertyType = findProperty.propertyType;
+
+            if (propertyType !== "rent") {
+                return res.status(400).json({
+                    success: false,
+                    message: "This is a renting funnel."
+                })
+            }
+            if (findProperty.addedBy === findInterest.buyerId) {
+                return res.status(400).json({
+                    success: false,
+                    message: "You cannot rent your own property."
+                })
+            }
+
+            const renterId = findInterest.buyerId;
+            const findRenter = await db.users.findOne({ isDeleted: false, _id: renterId });
+            let renterName = findRenter.fullName;
+            const findOwner = await db.users.findOne({ isDeleted: false, _id: findProperty.addedBy })
+            let ownerName = findOwner.fullName;
+
+            const createRentTransaction = await db.propertyTransfers.create({
+                renter: findInterest.buyerId,
+                owner: findProperty.addedBy,
+                transferDate: new Date(),
+                propertyType: propertyType,
+                transferStatus: "completed"
+            })
+
+            const createTimeline = await db.timeline.create({
+                transferDate: new Date(),
+                renter: renterName,
+                owner: ownerName,
+                addedBy: req.identity.id,
+                type: "renterInterestStatus"
+            });
+
+            const changeType = await db.property.updateOne({ isDeleted: false, _id: propertyId }, {
+                propertyType: "directory",
+                offerStatus: false,
+                contractSigned: false,
+                visitBookedCount: 0,
+                activityIndicatorCount: 0,
+                homeInventorySlots: [],
+                signingSlots: [],
+                autoInvite: false,
+                visitSlots: []
+            })
+
+
+            const recipientEmails = Object.values(emailMapping);
+
+            const renterEmail = findRenter.email;
+            const renterEmailPayload = {
+                email: renterEmail,
+                ownerName,
+                renterName,
+                propertyTitle: findProperty.propertyTitle,
+                propertyLink: `https://book.jcsoftwaresolution.in/property-details?id=${findProperty._id}`,
+                type: "renterCase"
+            }
+
+            const sendRenterEmail = await Emails.ownerCongratsEmail(renterEmailPayload)
+
+            if (recipientEmails.length > 0) {
+                const emailPromises = recipientEmails.map(async (email) => {
+                    try {
+                        await Emails.renterTransferEmail({
+                            email: email,
+                            propertyTitle: findProperty.propertyTitle,
+                            propertyType: propertyType,
+                            ownerName: ownerName,
+                            renterName: renterName,
+                            propertyLink: `https://book.jcsoftwaresolution.in/property-details?id=${findProperty._id}`
+                        });
+                        console.log("Email sent to:", email);
+                    } catch (emailError) {
+                        console.error("Error sending email to", email, ":", emailError.message);
+                    }
+                });
+
+                await Promise.all(emailPromises);
+                console.log("All emails processed");
+            } else {
+                console.log("No recipients to email");
+            }
+
+            const expireAllInterests = await db.interests.updateMany({
+                isDeleted: false,
+                propertyId,
+                interestStatus: "pending",
+                // transferDone: false
+            },
+                {
+                    interestStatus: "expired",
+                    transferDone: true,
+                })
+            const statusUpdated = await db.interests.updateOne({ _id: interestId }, { interestStatus: "completed", transferDone: true, funnelStatus })
+
+            return res.status(200).json({
+                success: true,
+                message: 'Renter confirmed, property type changes to directory.',
+            })
+
+
+        } catch (err) {
+            return res.status(400).json({
+                success: false,
+                message: 'Some issue has occured',
+                error: err.message
+            })
+        }
+    },
+
+
+    notifyOwner: async (req, res) => {
+        try {
+
+            let { interestId } = req.body;
+
+            if (!interestId) {
+                return res.status(400).json({
+                    success: false,
+                    message: "InterestId is required."
+                })
+            }
+
+            let findInterest = await db.interests.findOne({
+                _id: interestId,
+                isDeleted: false,
+                // transferDone: false,
+                // interestStatus: "pending"
+            });
+
+            if (findInterest.funnelStatus === "cancelled" || findInterest.propertyType !== "sale") {
+                return res.status(400).json({
+                    success: false,
+                    message: "Cannot send as your request has been cancelled."
+                })
+            }
+
+            if (!findInterest) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Interest not found."
+                })
+            }
+
+            const findProperty = await db.property.findOne({ _id: findInterest.propertyId, isDeleted: false })
+            if (!findProperty) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Property not found."
+                })
+            }
+
+            let findBuyer = await db.users.findOne({ _id: findInterest.buyerId, isDeleted: false });
+            if (!findBuyer) {
+                return res.status(404).json({
+                    success: false,
+                    message: "Buyer not found."
+                });
+            }
+
+            let findOwner = await db.users.findOne({ _id: findProperty.addedBy, isDeleted: false });
+            if (!findOwner) {
+                return res.status(404).json({
+                    success: false,
+                    message: "Owner not found."
+                });
+            }
+
+            const updateProperty = await db.interests.updateOne({
+                _id: interestId,
+                isDeleted: false
+            }, {
+                propertyTransferRequest: true
+            })
+
+
+            let sendEmail = await Emails.notifyOwner({
+                email: findOwner.email,
+                buyerName: findBuyer.fullName,
+                propertyTitle: findProperty.propertyTitle,
+                ownerName: findOwner.fullName
+            })
+
+            const createPropertyTransferNotification = await db.notifications.create({
+                sendTo: findProperty.addedBy,
+                sendBy: findInterest.buyerId,
+                status: "unread",
+                property_id: findInterest.propertyId,
+                type: "interestStatus",
+                title: "property-transfer-req-notification",
+                message: `${findBuyer.firstName} is asking you to transfer the property titled ${findProperty.propertyTitle}.`
+            });
+
+            return res.status(200).json({
+                success: true,
+                message: "Owner has been notified to transfer the property.",
+                notificationId: createPropertyTransferNotification._id
+            });
+
+        }
+        catch (err) {
+            return res.status(400).json({
+                success: false,
+                message: "Failed to notify the owner.",
+                error: err.message
+            })
+        }
+    },
+
+    propertyBasedInterestTransactions: async (req, res) => {
+        try {
+
+            const { propertyId } = req.query;
+            if (!propertyId) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Property ID is required"
+                });
+            }
+
+            const findInterest = await db.interestTransactions.find({
+                propertyId: propertyId,
+                isDeleted: false
+            })
+                .lean()
+                .sort("createdAt DESC");
+
+
+            if (!findInterest || findInterest.length === 0) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Interest not found for this property."
+                })
+            }
+
+            const formattedData = findInterest.map(i => ({
+                interestId: i.interestId,
+                funnelStatus: i.funnelStatus
+            }))
+            return res.status(400).json({
+                success: true,
+                message: "Data fetched successfully",
+                data: formattedData
+            })
+        }
+        catch (err) {
+            return res.status(400).json({
+                success: false,
+                message: "Failed to fetch data",
+                error: err.message
+            })
+        }
+    }
+
+
+}

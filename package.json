@@ -1,0 +1,52 @@
+{
+  "name": "bookaroo",
+  "version": "1.0.0",
+  "description": "Api repo for bookaroo",
+  "main": "server.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "production": "NODE_ENV=production node server.js",
+    "start": "nodemon server.js",
+    "dev": "nodemon"
+  },
+  "keywords": [
+    "Nodejs"
+  ],
+  "author": "Vishrut Abrol",
+  "license": "ISC",
+  "dependencies": {
+    "@getbrevo/brevo": "^4.0.1",
+    "agenda": "^5.0.0",
+    "axios": "^1.8.1",
+    "bcrypt": "^5.1.1",
+    "body-parser": "^2.2.0",
+    "cheerio": "^1.0.0",
+    "cors": "^2.8.5",
+    "csv-parser": "^3.0.0",
+    "csv-writer": "^1.6.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "fuzzball": "^2.1.2",
+    "google-auth-library": "^9.15.0",
+    "install": "^0.13.0",
+    "json2csv": "^6.0.0-alpha.2",
+    "jsonwebtoken": "^9.0.2",
+    "lodash": "^4.17.21",
+    "moment": "^2.30.1",
+    "mongodb": "^6.12.0",
+    "mongoose": "^8.12.1",
+    "multer": "^1.4.5-lts.1",
+    "node-cron": "^4.0.5",
+    "nodemailer": "^6.9.13",
+    "nodemailer-smtp-transport": "^2.4.2",
+    "nodemon": "^3.1.10",
+    "npm": "^11.9.0",
+    "ogr2ogr": "^5.0.0",
+    "puppeteer": "^24.3.1",
+    "socket.io": "^4.8.1",
+    "streamifier": "^0.1.1",
+    "stripe": "^16.9.0",
+    "us": "^2.0.0",
+    "xlsx": "^0.18.5"
+  }
+}
