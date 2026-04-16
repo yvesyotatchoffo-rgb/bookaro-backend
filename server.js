@@ -86,10 +86,15 @@ db.mongoose
   .then(async () => {
     console.log("Connected to the database!");
 
-    try {
-      await seedDb();
-    } catch (seedError) {
-      console.error("Database seed failed:", seedError);
+    const enableDbSeed = process.env.ENABLE_DB_SEED === "true";
+    if (enableDbSeed) {
+      try {
+        await seedDb();
+      } catch (seedError) {
+        console.error("Database seed failed:", seedError);
+      }
+    } else {
+      console.log("Database seed is disabled. Set ENABLE_DB_SEED=true to enable.");
     }
 
 
