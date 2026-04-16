@@ -131,9 +131,14 @@ const seedDb = async () => {
 };
 seedDb();
 
-resetDailyMessageLimit();
-checkAndSendSubscriptionReminders();
-monthlyCampaignLimit();
+const enableStartupCrons = process.env.ENABLE_STARTUP_CRONS === "true";
+if (enableStartupCrons) {
+  resetDailyMessageLimit();
+  checkAndSendSubscriptionReminders();
+  monthlyCampaignLimit();
+} else {
+  console.log("Startup cron jobs are disabled. Set ENABLE_STARTUP_CRONS=true to enable.");
+}
 // set port, listen for requests
 const PORT = process.env.PORT || 6089;
 
