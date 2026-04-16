@@ -2,10 +2,16 @@ const axios = require("axios");
 const db = require("../models");
 const { JWT } = require("google-auth-library");
 
-const serviceAccount = require("../../google-services.json");
+let serviceAccount = null;
+try {
+  serviceAccount = require("../../google-services.json");
+} catch (error) {
+  console.warn("FCM disabled: google-services.json not found.");
+}
 
 function getAccessToken() {
   try {
+    if (!serviceAccount) return null;
     const SCOPES = "https://www.googleapis.com/auth/firebase.messaging";
     return new Promise(function (resolve, reject) {
       const key = serviceAccount;
@@ -33,6 +39,7 @@ function getAccessToken() {
 exports.send_fcm_push_notification = async (data) => {
   try {
     let access = await getAccessToken();
+    if (!access) return "FCM disabled";
     let payload = {
       message: {
         token: data.device_token,
