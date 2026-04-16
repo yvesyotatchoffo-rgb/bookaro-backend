@@ -1,5 +1,6 @@
 var nodemailer = require("nodemailer");
 var smtpTransport = require("nodemailer-smtp-transport");
+const { sendEmail: sendBrevoEmail, brevoEmailModules } = require("../config/brevo.config");
 
 module.exports = {
   sendEmail: async (toList, subject, message, next) => {
@@ -9,7 +10,27 @@ module.exports = {
     const smtpPassword = process.env.SMTP_PASSWORD;
 
     if (!smtpHost || !smtpUser || !smtpPassword) {
-      throw new Error("SMTP is not configured. Please set SMTP_HOST, SMTP_USER and SMTP_PASSWORD.");
+      if (process.env.BREVO_API_KEY) {
+        const brevoResult = await sendBrevoEmail({
+          module: brevoEmailModules.AUTH,
+          to: toList,
+          subject,
+          htmlContent: message,
+        });
+
+        if (!brevoResult || !brevoResult.success) {
+          throw new Error(
+            "Email delivery failed via Brevo fallback: " +
+              (brevoResult && brevoResult.error ? brevoResult.error : "Unknown error")
+          );
+        }
+
+        return brevoResult;
+      }
+
+      throw new Error(
+        "Email delivery is not configured. Set SMTP_* or BREVO_API_KEY/BREVO_* settings."
+      );
     }
 
     const transport = nodemailer.createTransport(
