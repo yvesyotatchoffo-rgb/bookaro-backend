@@ -3,4 +3,5 @@ node_modules
 .env
 package-lock.json
 public/img
-public/documentgoogle-services.json
+public/document
+google-services.json
