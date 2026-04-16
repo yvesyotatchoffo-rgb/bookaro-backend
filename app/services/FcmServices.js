@@ -3,11 +3,26 @@ const db = require("../models");
 const { JWT } = require("google-auth-library");
 
 let serviceAccount = null;
-try {
-  serviceAccount = require("../../google-services.json");
-} catch (error) {
-  console.warn("FCM disabled: google-services.json not found.");
+const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+
+if (serviceAccountJson) {
+  try {
+    serviceAccount = JSON.parse(serviceAccountJson);
+  } catch (error) {
+    console.warn("FCM disabled: invalid FIREBASE_SERVICE_ACCOUNT_JSON.");
+  }
+} else {
+  try {
+    serviceAccount = require("../../google-services.json");
+  } catch (error) {
+    console.warn("FCM disabled: provide FIREBASE_SERVICE_ACCOUNT_JSON or local google-services.json.");
+  }
 }
+
+const firebaseProjectId =
+  process.env.FIREBASE_PROJECT_ID ||
+  (serviceAccount && serviceAccount.project_id) ||
+  "bookaroo-1cd88";
 
 function getAccessToken() {
   try {
@@ -60,7 +75,7 @@ exports.send_fcm_push_notification = async (data) => {
         "Content-Type": "application/json",
       },
     };
-    const url = "https://fcm.googleapis.com/v1/projects/bookaroo-1cd88/messages:send";
+    const url = `https://fcm.googleapis.com/v1/projects/${firebaseProjectId}/messages:send`;
     const response = await axios.post(url, payload, config);
     let all_unread_notification = await db.notifications.countDocuments({
       sendTo: data.sendTo,
