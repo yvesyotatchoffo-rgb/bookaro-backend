@@ -7,6 +7,17 @@ var bcrypt = require("bcrypt");
 
 const app = express();
 app.use(cors());
+
+// Health endpoint for platform checks (Render, uptime monitors).
+app.get("/healthz", (req, res) => {
+  res.status(200).json({
+    ok: true,
+    service: "bookaroo-api",
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+  });
+});
+
 // app.use(
 //   cors({
 //     origin: "*",

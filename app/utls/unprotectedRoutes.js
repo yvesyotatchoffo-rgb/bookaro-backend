@@ -1,5 +1,7 @@
 
 const baseUnprotectedRoutes = [
+  "/",
+  "/healthz",
     "/buildingPermits/listing",
     "/user/pro/listing",
     "/service/list",
