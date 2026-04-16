@@ -86,6 +86,12 @@ db.mongoose
   .then(async () => {
     console.log("Connected to the database!");
 
+    try {
+      await seedDb();
+    } catch (seedError) {
+      console.error("Database seed failed:", seedError);
+    }
+
 
     //load all jobs
    // const agenda = require("./app/config/agenda.config.js");
@@ -140,7 +146,6 @@ const seedDb = async () => {
     // }
   }
 };
-seedDb();
 
 const enableStartupCrons = process.env.ENABLE_STARTUP_CRONS === "true";
 if (enableStartupCrons) {
